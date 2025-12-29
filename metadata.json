@@ -1,0 +1,5 @@
+{
+  "name": "ZakatMinimalist",
+  "description": "A production-ready, minimalist Zakat management application featuring asset tracking, payment history, and automated calculations with PDF export.",
+  "requestFramePermissions": []
+}

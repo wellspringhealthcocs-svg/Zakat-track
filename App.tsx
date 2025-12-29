@@ -1,0 +1,651 @@
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { User, Asset, Payment, AssetType } from './types';
+import { tursoService } from './services/tursoService';
+import { WelcomeScreen } from './components/WelcomeScreen';
+import { AssetForm } from './components/AssetForm';
+import { PaymentForm } from './components/PaymentForm';
+import { ZAKAT_RATE, CURRENCIES } from './constants';
+import { 
+  Plus, 
+  History, 
+  LayoutDashboard, 
+  FileDown, 
+  LogOut, 
+  MoonStar, 
+  Wallet,
+  Calculator,
+  AlertCircle,
+  Menu,
+  X as CloseIcon,
+  RefreshCw,
+  TrendingUp,
+  Moon,
+  Sun,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight,
+  Instagram
+} from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { AnimatePresence, motion } from 'framer-motion';
+
+const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [isWelcoming, setIsWelcoming] = useState(false);
+  const [view, setView] = useState<'dashboard' | 'history'>('dashboard');
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showAssetForm, setShowAssetForm] = useState(false);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  // Zakat Calculation State
+  const [calculatedZakat, setCalculatedZakat] = useState<{ amount: number; currency: string } | null>(null);
+  const [showCalculationPrompt, setShowCalculationPrompt] = useState(false);
+  const [calcStep, setCalcStep] = useState<1 | 2>(1);
+  const [baseCurrency, setBaseCurrency] = useState<string>('USD');
+  const [goldRate, setGoldRate] = useState<string>('');
+  const [silverRate, setSilverRate] = useState<string>('');
+  const [exchangeRates, setExchangeRates] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      root.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const username = formData.get('username') as string;
+    if (username) {
+      setUser({ id: 'user_123', username });
+      setIsWelcoming(true);
+    }
+  };
+
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await tursoService.initializeDatabase();
+      const [assetsData, paymentsData] = await Promise.all([
+        tursoService.fetchAssets(user.id),
+        tursoService.fetchPayments(user.id)
+      ]);
+      setAssets(assetsData);
+      setPayments(paymentsData);
+    } catch (err: any) {
+      console.error(err);
+      setError(`Database Error: ${err.message || 'Check your internet or Turso credentials.'}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && !isWelcoming) {
+      fetchData();
+    }
+  }, [user, isWelcoming, fetchData]);
+
+  const hasGold = assets.some(a => a.type === AssetType.GOLD);
+  const hasSilver = assets.some(a => a.type === AssetType.SILVER);
+  const otherCurrencies = [...new Set(assets.filter(a => (a.type === AssetType.MONEY || a.type === AssetType.BUSINESS) && a.currency && a.currency !== baseCurrency).map(a => a.currency!))];
+
+  const startCalculation = () => {
+    setCalcStep(1);
+    setShowCalculationPrompt(true);
+  };
+
+  const proceedToRates = () => {
+    setCalcStep(2);
+  };
+
+  const performFinalCalculation = () => {
+    const gRate = parseFloat(goldRate) || 0;
+    const sRate = parseFloat(silverRate) || 0;
+    
+    let totalValueInBase = 0;
+    assets.forEach(asset => {
+      if (asset.type === AssetType.GOLD) {
+        totalValueInBase += (asset.weight || 0) * gRate;
+      } else if (asset.type === AssetType.SILVER) {
+        totalValueInBase += (asset.weight || 0) * sRate;
+      } else if (asset.type === AssetType.MONEY || asset.type === AssetType.BUSINESS) {
+        if (!asset.currency || asset.currency === baseCurrency) {
+          totalValueInBase += asset.value;
+        } else {
+          const rate = parseFloat(exchangeRates[asset.currency!] || '1');
+          totalValueInBase += asset.value * rate;
+        }
+      } else {
+        totalValueInBase += asset.value;
+      }
+    });
+
+    setCalculatedZakat({ amount: totalValueInBase * ZAKAT_RATE, currency: baseCurrency });
+    setShowCalculationPrompt(false);
+  };
+
+  const exportPDF = () => {
+    if (typeof jsPDF !== 'function' && !(jsPDF as any).jsPDF) {
+      console.error("jsPDF is not loaded properly.");
+      return;
+    }
+
+    const doc = new jsPDF();
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129); 
+    doc.text('Zakat Track Portfolio', 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); 
+    doc.text(`User: ${user?.username || 'Guest'}`, 14, 28);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 34);
+
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59); 
+    doc.text('Assets Registry', 14, 45);
+    
+    autoTable(doc, {
+      startY: 50,
+      head: [['Name', 'Type', 'Quantity', 'Value']],
+      body: assets.map(a => [
+        a.name,
+        a.type,
+        a.weight ? `${a.weight}g` : (a.currency || '-'),
+        a.type === AssetType.GOLD || a.type === AssetType.SILVER ? 'Market Based' : `${a.value.toLocaleString()} ${a.currency || ''}`
+      ]),
+      headStyles: { fillColor: [16, 185, 129] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    });
+
+    const lastTable = (doc as any).lastAutoTable;
+    const nextY = (lastTable ? lastTable.finalY : 50) + 15;
+    doc.text('Payment History', 14, nextY);
+    
+    autoTable(doc, {
+      startY: nextY + 5,
+      head: [['Purpose', 'Method', 'Date', 'Amount']],
+      body: payments.map(p => [
+        p.name,
+        p.method,
+        new Date(p.date).toLocaleDateString(),
+        `$${p.amount.toLocaleString()}`
+      ]),
+      headStyles: { fillColor: [30, 41, 59] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
+    doc.setFontSize(12);
+    doc.text(`Total Payments Recorded: $${totalPaid.toLocaleString()}`, 14, finalY);
+
+    if (calculatedZakat !== null) {
+      doc.text(`Calculated Zakat Obligation: ${calculatedZakat.amount.toLocaleString(undefined, {minimumFractionDigits: 2})} ${calculatedZakat.currency}`, 14, finalY + 8);
+    }
+
+    doc.save(`Zakat_Track_Report_${user?.username || 'user'}.pdf`);
+  };
+
+  const currencyTotals = assets.reduce((acc, a) => {
+    if (a.type === AssetType.MONEY || a.type === AssetType.BUSINESS) {
+      const cur = a.currency || 'Generic';
+      acc[cur] = (acc[cur] || 0) + a.value;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  const metalTotals = assets.reduce((acc, a) => {
+    if (a.type === AssetType.GOLD || a.type === AssetType.SILVER) {
+      acc[a.type] = (acc[a.type] || 0) + (a.weight || 0);
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  const SidebarContent = () => (
+    <div className="h-full flex flex-col p-4">
+      <div className={`flex items-center gap-3 mb-10 transition-all duration-300 ${isSidebarMinimized ? 'px-1 justify-center' : 'px-2'}`}>
+        <div className="bg-emerald-600 p-2 rounded-lg shrink-0">
+          <MoonStar className="text-white" size={20} />
+        </div>
+        {!isSidebarMinimized && <span className="font-bold text-xl tracking-tight text-slate-900 dark:text-slate-100 truncate">Zakat Track</span>}
+      </div>
+
+      <div className="flex-1 space-y-2">
+        <button onClick={() => { setView('dashboard'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl ${view === 'dashboard' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+          <LayoutDashboard size={20} />
+          {!isSidebarMinimized && <span className="font-semibold">Dashboard</span>}
+        </button>
+        <button onClick={() => { setView('history'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl ${view === 'history' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+          <History size={20} />
+          {!isSidebarMinimized && <span className="font-semibold">History</span>}
+        </button>
+        <button onClick={exportPDF} className={`w-full flex items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800`}>
+          <FileDown size={20} />
+          {!isSidebarMinimized && <span className="font-semibold">Export Report</span>}
+        </button>
+      </div>
+
+      <div className="pt-6 border-t border-slate-100 dark:border-slate-800 mt-auto space-y-4">
+        <button 
+          onClick={() => setIsDarkMode(!isDarkMode)} 
+          className={`w-full flex items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800`}
+        >
+          {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          {!isSidebarMinimized && <span className="font-semibold">{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
+        </button>
+
+        <button 
+          onClick={() => setIsSidebarMinimized(!isSidebarMinimized)} 
+          className={`hidden lg:flex w-full items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800`}
+        >
+          {isSidebarMinimized ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+          {!isSidebarMinimized && <span className="font-semibold">Collapse</span>}
+        </button>
+
+        <div className={`flex items-center transition-all duration-300 ${isSidebarMinimized ? 'justify-center px-1' : 'gap-3 px-2'} mb-2`}>
+          <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-600 dark:text-slate-300 uppercase text-sm shrink-0">
+            {user?.username?.charAt(0) || '?'}
+          </div>
+          {!isSidebarMinimized && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{user?.username || 'User'}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Standard User</p>
+            </div>
+          )}
+        </div>
+        
+        <div className="space-y-1">
+          <button onClick={() => setUser(null)} className={`w-full flex items-center transition-all ${isSidebarMinimized ? 'justify-center p-3' : 'gap-3 px-4 py-3'} rounded-xl text-slate-500 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 transition-all`}>
+            <LogOut size={20} />
+            {!isSidebarMinimized && <span className="font-semibold">Sign Out</span>}
+          </button>
+          {!isSidebarMinimized && (
+            <div className="py-2 flex flex-col items-center">
+              <p className="text-[10px] text-slate-400 dark:text-slate-600 text-center font-medium">
+                Created by Ahmad yousuf 2025
+              </p>
+              <a 
+                href="https://www.instagram.com/ahmad_v07/" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-600 dark:text-emerald-500 hover:underline font-bold"
+              >
+                <Instagram size={12} />
+                Contact
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4 transition-colors duration-300">
+        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-100 dark:border-slate-800">
+          <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <MoonStar className="text-emerald-600 dark:text-emerald-400" size={32} />
+          </div>
+          <h1 className="text-2xl font-bold text-center text-slate-800 dark:text-slate-100 mb-2">Zakat Track</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-center mb-8 font-light">Securely manage your Zakat journey</p>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input name="username" type="text" required placeholder="Username" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100" />
+            </div>
+            <div>
+              <input type="password" placeholder="Password (Any)" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100" />
+            </div>
+            <button type="submit" className="w-full py-4 bg-slate-900 dark:bg-emerald-600 text-white font-bold rounded-xl hover:bg-slate-800 dark:hover:bg-emerald-700 transition-colors shadow-lg">Sign In</button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-300 flex overflow-x-hidden">
+      <AnimatePresence>
+        {isWelcoming && user && <WelcomeScreen username={user.username} onComplete={() => setIsWelcoming(false)} />}
+      </AnimatePresence>
+
+      <aside className={`hidden lg:block transition-all duration-300 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 sticky top-0 h-screen ${isSidebarMinimized ? 'w-20' : 'w-72'}`}>
+        <SidebarContent />
+      </aside>
+
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsMobileMenuOpen(false)} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 lg:hidden" />
+            <motion.aside initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }} className="fixed left-0 top-0 bottom-0 w-72 bg-white dark:bg-slate-900 z-50 lg:hidden shadow-2xl">
+              <SidebarContent />
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 flex flex-col min-h-screen max-w-full overflow-hidden">
+        <header className="lg:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 h-16 px-6 flex items-center justify-between sticky top-0 z-40 transition-colors">
+          <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 -ml-2 text-slate-500 dark:text-slate-400">
+            <Menu size={24} />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="bg-emerald-600 p-1.5 rounded-lg">
+              <MoonStar className="text-white" size={18} />
+            </div>
+            <span className="font-bold text-lg text-slate-900 dark:text-white">Zakat Track</span>
+          </div>
+          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 text-slate-500 dark:text-slate-400">
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+        </header>
+
+        <main className="max-w-5xl w-full mx-auto px-4 md:px-6 py-8 md:py-12">
+          {error && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 p-4 rounded-xl flex items-center justify-between gap-3 text-red-700 dark:text-red-400 mb-8">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={20} />
+                <p className="text-sm font-medium">{error}</p>
+              </div>
+              <button onClick={fetchData} className="p-2 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+                <RefreshCw size={18} />
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+            <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col justify-between transition-colors">
+              <span className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-4">Recorded Wealth Summary</span>
+              <div className="flex flex-wrap gap-x-6 gap-y-3">
+                {Object.entries(currencyTotals).map(([cur, val]) => (
+                  <div key={cur} className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{cur}</span>
+                    <span className="text-xl font-bold dark:text-white">{val.toLocaleString()}</span>
+                  </div>
+                ))}
+                {Object.entries(metalTotals).map(([type, weight]) => (
+                  <div key={type} className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{type}</span>
+                    <span className="text-xl font-bold dark:text-white">{weight.toLocaleString()}g</span>
+                  </div>
+                ))}
+                {Object.keys(currencyTotals).length === 0 && Object.keys(metalTotals).length === 0 && (
+                  <span className="text-slate-400 italic">No assets recorded</span>
+                )}
+              </div>
+            </motion.div>
+            
+            <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="bg-emerald-600 p-6 rounded-2xl shadow-lg shadow-emerald-600/20 text-white flex flex-col justify-between">
+              <span className="text-emerald-100 text-sm font-medium">Zakat Obligation</span>
+              <div className="mt-4 flex items-center justify-between">
+                {calculatedZakat !== null ? (
+                  <h2 className="text-2xl font-bold truncate">
+                    {calculatedZakat.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} {calculatedZakat.currency}
+                  </h2>
+                ) : (
+                  <h2 className="text-xl font-medium italic opacity-70">Awaiting Calculation</h2>
+                )}
+                <button 
+                  onClick={startCalculation}
+                  className="bg-white/10 hover:bg-white/20 p-3 rounded-xl transition-colors border border-white/10 flex items-center gap-2 group shrink-0"
+                >
+                  <Calculator size={20} />
+                  <span className="font-bold">Calculate</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+
+          {view === 'dashboard' ? (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Your Assets</h3>
+                <button onClick={() => setShowAssetForm(true)} className="flex items-center gap-2 bg-slate-900 dark:bg-emerald-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-slate-800 dark:hover:bg-emerald-700 transition-all shadow-xl shadow-slate-900/10">
+                  <Plus size={20} />
+                  <span>Add New Asset</span>
+                </button>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors">
+                {loading ? (
+                  <div className="p-24 text-center">
+                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-slate-200 dark:border-slate-700 border-t-emerald-600 mb-4" />
+                    <p className="text-slate-400 dark:text-slate-500 font-medium">Gathering your wealth data...</p>
+                  </div>
+                ) : assets.length === 0 ? (
+                  <div className="p-24 text-center text-slate-400 dark:text-slate-500">
+                    <Wallet className="mx-auto mb-4 opacity-20" size={48} />
+                    <p className="font-medium">No assets recorded yet. Start by adding one above.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {assets.map((asset) => (
+                      <motion.div key={asset.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-6 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                        <div className="flex items-center gap-5">
+                          <div className={`p-4 rounded-2xl ${
+                            asset.type === AssetType.GOLD ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' :
+                            asset.type === AssetType.SILVER ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300' :
+                            'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
+                          }`}>
+                            <MoonStar size={24} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800 dark:text-slate-200 text-lg">{asset.name}</p>
+                            <p className="text-sm text-slate-400 dark:text-slate-500 font-medium">
+                              {asset.type} • {asset.weight ? `${asset.weight}g` : `${asset.currency || ''}`}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right flex items-center gap-8">
+                          <div>
+                            {asset.type === AssetType.GOLD || asset.type === AssetType.SILVER ? (
+                              <p className="font-bold text-slate-400 dark:text-slate-500 italic text-sm">Market Rate</p>
+                            ) : (
+                              <p className="font-bold text-slate-900 dark:text-white text-lg">{asset.value.toLocaleString()} <span className="text-xs text-slate-400">{asset.currency}</span></p>
+                            )}
+                            <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">{new Date(asset.created_at).toLocaleDateString()}</p>
+                          </div>
+                          <button onClick={async () => { await tursoService.deleteAsset(asset.id); fetchData(); }} className="lg:opacity-0 lg:group-hover:opacity-100 text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-all p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">
+                            <CloseIcon size={18} />
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Payment History</h3>
+                <button onClick={() => setShowPaymentForm(true)} className="flex items-center gap-2 bg-slate-900 dark:bg-emerald-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-slate-800 dark:hover:bg-emerald-700 transition-all shadow-xl shadow-slate-900/10">
+                  <Plus size={20} />
+                  <span>Record Payment</span>
+                </button>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors">
+                 {loading ? (
+                  <div className="p-24 text-center text-slate-400 dark:text-slate-500 font-medium">Loading history...</div>
+                ) : payments.length === 0 ? (
+                  <div className="p-24 text-center text-slate-400 dark:text-slate-500">
+                    <History className="mx-auto mb-4 opacity-20" size={48} />
+                    <p className="font-medium">No payment records found.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {payments.map((payment) => (
+                      <div key={payment.id} className="p-6 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <div className="flex items-center gap-5">
+                          <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-2xl">
+                            <History size={24} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800 dark:text-slate-200 text-lg">{payment.name}</p>
+                            <p className="text-sm text-slate-400 dark:text-slate-500 font-medium">{payment.method} • {new Date(payment.date).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-emerald-600 dark:text-emerald-400 text-lg">+ ${payment.amount.toLocaleString()}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">Confirmed</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Multi-Step Calculation Prompt Modal */}
+      <AnimatePresence>
+        {showCalculationPrompt && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-[70] p-4">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl border border-slate-100 dark:border-slate-800 transition-colors relative">
+              
+              <button onClick={() => setShowCalculationPrompt(false)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors">
+                <CloseIcon size={20} />
+              </button>
+
+              <div className="mb-8">
+                <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mb-4">
+                  <Calculator className="text-emerald-600 dark:text-emerald-400" size={24} />
+                </div>
+                <h3 className="text-2xl font-bold text-slate-800 dark:text-white">Calculate Zakat</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {calcStep === 1 ? 'Step 1: Choose calculation currency' : 'Step 2: Provide exchange rates & market values'}
+                </p>
+              </div>
+              
+              <div className="space-y-6">
+                {calcStep === 1 ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-600 dark:text-slate-400 mb-2">Target Currency for Total</label>
+                      <select 
+                        value={baseCurrency}
+                        onChange={(e) => setBaseCurrency(e.target.value)}
+                        className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white transition-all"
+                      >
+                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <button 
+                      onClick={proceedToRates}
+                      className="w-full py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
+                    >
+                      Next Step <ArrowRight size={18} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                    {(hasGold || hasSilver) && (
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl space-y-4">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Market Rates (Per Gram)</p>
+                        {hasGold && (
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 dark:text-slate-400 mb-1">Gold Price in {baseCurrency}</label>
+                            <input 
+                              type="number" 
+                              step="any"
+                              value={goldRate} 
+                              onChange={(e) => setGoldRate(e.target.value)}
+                              placeholder="e.g. 65.20"
+                              className="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white" 
+                            />
+                          </div>
+                        )}
+                        {hasSilver && (
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 dark:text-slate-400 mb-1">Silver Price in {baseCurrency}</label>
+                            <input 
+                              type="number" 
+                              step="any"
+                              value={silverRate} 
+                              onChange={(e) => setSilverRate(e.target.value)}
+                              placeholder="e.g. 0.85"
+                              className="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white" 
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {otherCurrencies.length > 0 && (
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl space-y-4">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Exchange Rates</p>
+                        {otherCurrencies.map(cur => (
+                          <div key={cur}>
+                            <label className="block text-sm font-semibold text-slate-600 dark:text-slate-400 mb-1">1 {cur} = ? {baseCurrency}</label>
+                            <input 
+                              type="number" 
+                              step="any"
+                              value={exchangeRates[cur] || ''} 
+                              onChange={(e) => setExchangeRates({...exchangeRates, [cur]: e.target.value})}
+                              placeholder="e.g. 0.27"
+                              className="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white" 
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 pt-4 sticky bottom-0 bg-white dark:bg-slate-900 py-2">
+                      <button 
+                        onClick={() => setCalcStep(1)}
+                        className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                      >
+                        Back
+                      </button>
+                      <button 
+                        onClick={performFinalCalculation}
+                        className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+                      >
+                        Calculate Total
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showAssetForm && (
+          <AssetForm user={user} onClose={() => setShowAssetForm(false)} onSuccess={() => { setShowAssetForm(false); fetchData(); }} onAdd={tursoService.addAsset} />
+        )}
+        {showPaymentForm && (
+          <PaymentForm user={user} onClose={() => setShowPaymentForm(false)} onSuccess={() => { setShowPaymentForm(false); fetchData(); }} onAdd={tursoService.addPayment} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+export default App;
