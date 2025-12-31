@@ -27,6 +27,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Babel for In-Browser JSX Transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -36,7 +40,24 @@
         .prose h2 { font-weight: 700; font-size: 1.5rem; margin-top: 2rem; margin-bottom: 1rem; color: #1e293b; }
         .dark .prose h2 { color: #f8fafc; }
         .prose p { margin-bottom: 1.25rem; line-height: 1.75; }
+        
+        #root:empty::before {
+            content: 'Purifying data...';
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #10b981;
+            font-weight: 600;
+            font-size: 1.25rem;
+            background: #f8fafc;
+        }
+        .dark #root:empty::before {
+            background: #020617;
+            color: #10b981;
+        }
     </style>
+
 <script type="importmap">
 {
   "imports": {
@@ -57,7 +78,6 @@
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
     <div id="root"></div>
-    <!-- Load the entry point explicitly -->
-    <script type="module" src="./index.tsx"></script>
+    <script type="text/babel" data-type="module" src="./index.tsx"></script>
 </body>
 </html>
