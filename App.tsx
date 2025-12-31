@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { User, Asset, Payment, AssetType, BlogPost } from './types';
-import { tursoService } from './services/tursoService';
-import { WelcomeScreen } from './components/WelcomeScreen';
-import { AssetForm } from './components/AssetForm';
-import { PaymentForm } from './components/PaymentForm';
-import { AuthScreen } from './components/AuthScreen';
-import { ZAKAT_RATE, CURRENCIES, BLOG_POSTS } from './constants';
+import { User, Asset, Payment, AssetType, BlogPost } from './types.ts';
+import { tursoService } from './services/tursoService.ts';
+import { WelcomeScreen } from './components/WelcomeScreen.tsx';
+import { AssetForm } from './components/AssetForm.tsx';
+import { PaymentForm } from './components/PaymentForm.tsx';
+import { AuthScreen } from './components/AuthScreen.tsx';
+import { ZAKAT_RATE, CURRENCIES, BLOG_POSTS } from './constants.ts';
 import { 
   Plus, 
   History, 
@@ -142,8 +142,7 @@ const App: React.FC = () => {
 
   const hasGold = assets.some(a => a.type === AssetType.GOLD);
   const hasSilver = assets.some(a => a.type === AssetType.SILVER);
-  const otherCurrencies = [...new Set(assets.filter(a => (a.type === AssetType.MONEY || a.type === AssetType.BUSINESS) && a.currency && a.currency !== baseCurrency).map(a => a.currency!))];
-
+  
   const startCalculation = () => {
     setCalcStep(1);
     setShowCalculationPrompt(true);

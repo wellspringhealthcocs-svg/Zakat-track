@@ -1,6 +1,6 @@
 
-import { db } from '../assets/js/db';
-import { Asset, Payment, AssetType, User } from '../types';
+import { db } from '../assets/js/db.js';
+import { Asset, Payment, AssetType, User } from '../types.ts';
 
 export const tursoService = {
   async initializeDatabase(): Promise<void> {
