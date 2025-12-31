@@ -13,7 +13,7 @@ export interface Asset {
   type: AssetType;
   weight?: number;
   currency?: string;
-  value: number; // For metals, this might be 0 until calculated
+  value: number;
   created_at: string;
 }
 
@@ -30,4 +30,15 @@ export interface Payment {
 export interface User {
   id: string;
   username: string;
+}
+
+export interface BlogPost {
+  id: string;
+  title: string;
+  excerpt: string;
+  content: string;
+  author: string;
+  date: string;
+  readTime: string;
+  category: string;
 }
